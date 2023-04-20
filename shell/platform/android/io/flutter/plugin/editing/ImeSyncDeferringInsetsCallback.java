@@ -79,6 +79,7 @@ class ImeSyncDeferringInsetsCallback {
   // Add this object's event listeners to its view.
   void install() {
     view.setWindowInsetsAnimationCallback(animationCallback);
+    // Presumably going to conflict:
     view.setOnApplyWindowInsetsListener(insetsListener);
   }
 
@@ -132,22 +133,7 @@ class ImeSyncDeferringInsetsCallback {
         return insets;
       }
       WindowInsets.Builder builder = new WindowInsets.Builder(lastWindowInsets);
-      // Overlay the ime-only insets with the full insets.
-      //
-      // The IME insets passed in by onProgress assumes that the entire animation
-      // occurs above any present navigation and status bars. This causes the
-      // IME inset to be too large for the animation. To remedy this, we merge the
-      // IME inset with other insets present via a subtract + reLu, which causes the
-      // IME inset to be overlaid with any bars present.
-      Insets newImeInsets =
-          Insets.of(
-              0,
-              0,
-              0,
-              Math.max(
-                  insets.getInsets(deferredInsetTypes).bottom
-                      - insets.getInsets(overlayInsetTypes).bottom,
-                  0));
+      Insets newImeInsets = Insets.of(0, 0, 0, insets.getInsets(deferredInsetTypes).bottom);
       builder.setInsets(deferredInsetTypes, newImeInsets);
       // Directly call onApplyWindowInsets of the view as we do not want to pass through
       // the onApplyWindowInsets defined in this class, which would consume the insets

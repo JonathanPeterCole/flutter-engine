@@ -10,7 +10,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.database.ContentObserver;
-import android.graphics.Insets;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
@@ -44,6 +43,8 @@ import androidx.annotation.RequiresApi;
 import androidx.annotation.VisibleForTesting;
 import androidx.core.content.ContextCompat;
 import androidx.core.util.Consumer;
+import androidx.core.view.DisplayCutoutCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.window.java.layout.WindowInfoTrackerCallbackAdapter;
 import androidx.window.layout.DisplayFeature;
 import androidx.window.layout.FoldingFeature;
@@ -639,8 +640,8 @@ public class FlutterView extends FrameLayout
   // but when the inset is just the hidden nav bar, we want to provide a zero inset so the space
   // can be used.
   //
-  // This method is replaced by Android API 30 (R/11) getInsets() method which can take the
-  // android.view.WindowInsets.Type.ime() flag to find the keyboard inset.
+  // This method is replaced by WindowInsetsCompat.getInsets() on Android SDK >= 23 method which can
+  // take the WindowInsetsCompat.Type.ime() flag to find the keyboard inset.
   @TargetApi(20)
   @RequiresApi(20)
   private int guessBottomKeyboardInset(WindowInsets insets) {
@@ -677,99 +678,60 @@ public class FlutterView extends FrameLayout
   @NonNull
   public final WindowInsets onApplyWindowInsets(@NonNull WindowInsets insets) {
     WindowInsets newInsets = super.onApplyWindowInsets(insets);
+    WindowInsetsCompat windowInsetsCompat = WindowInsetsCompat.toWindowInsetsCompat(insets);
 
-    // getSystemGestureInsets() was introduced in API 29 and immediately deprecated in 30.
-    if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q) {
-      Insets systemGestureInsets = insets.getSystemGestureInsets();
-      viewportMetrics.systemGestureInsetTop = systemGestureInsets.top;
-      viewportMetrics.systemGestureInsetRight = systemGestureInsets.right;
-      viewportMetrics.systemGestureInsetBottom = systemGestureInsets.bottom;
-      viewportMetrics.systemGestureInsetLeft = systemGestureInsets.left;
-    }
+    androidx.core.graphics.Insets uiInsets =
+        windowInsetsCompat.getInsets(WindowInsetsCompat.Type.systemBars());
+    viewportMetrics.viewPaddingTop = uiInsets.top;
+    viewportMetrics.viewPaddingRight = uiInsets.right;
+    viewportMetrics.viewPaddingBottom = uiInsets.bottom;
+    viewportMetrics.viewPaddingLeft = uiInsets.left;
 
-    boolean statusBarVisible = (SYSTEM_UI_FLAG_FULLSCREEN & getWindowSystemUiVisibility()) == 0;
-    boolean navigationBarVisible =
-        (SYSTEM_UI_FLAG_HIDE_NAVIGATION & getWindowSystemUiVisibility()) == 0;
+    androidx.core.graphics.Insets systemGestureInsets =
+        windowInsetsCompat.getInsets(WindowInsetsCompat.Type.systemGestures());
+    viewportMetrics.systemGestureInsetTop = systemGestureInsets.top;
+    viewportMetrics.systemGestureInsetRight = systemGestureInsets.right;
+    viewportMetrics.systemGestureInsetBottom = systemGestureInsets.bottom;
+    viewportMetrics.systemGestureInsetLeft = systemGestureInsets.left;
 
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-      int mask = 0;
-      if (navigationBarVisible) {
-        mask = mask | android.view.WindowInsets.Type.navigationBars();
-      }
-      if (statusBarVisible) {
-        mask = mask | android.view.WindowInsets.Type.statusBars();
-      }
-      Insets uiInsets = insets.getInsets(mask);
-      viewportMetrics.viewPaddingTop = uiInsets.top;
-      viewportMetrics.viewPaddingRight = uiInsets.right;
-      viewportMetrics.viewPaddingBottom = uiInsets.bottom;
-      viewportMetrics.viewPaddingLeft = uiInsets.left;
-
-      Insets imeInsets = insets.getInsets(android.view.WindowInsets.Type.ime());
+    // The WindowInsetsCompat IME insets are currently only available on SDK 23 and above, so we
+    // fall back to guessBottomKeyboardInset on older platforms
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      androidx.core.graphics.Insets imeInsets =
+          windowInsetsCompat.getInsets(WindowInsetsCompat.Type.ime());
       viewportMetrics.viewInsetTop = imeInsets.top;
       viewportMetrics.viewInsetRight = imeInsets.right;
       viewportMetrics.viewInsetBottom = imeInsets.bottom; // Typically, only bottom is non-zero
       viewportMetrics.viewInsetLeft = imeInsets.left;
-
-      Insets systemGestureInsets =
-          insets.getInsets(android.view.WindowInsets.Type.systemGestures());
-      viewportMetrics.systemGestureInsetTop = systemGestureInsets.top;
-      viewportMetrics.systemGestureInsetRight = systemGestureInsets.right;
-      viewportMetrics.systemGestureInsetBottom = systemGestureInsets.bottom;
-      viewportMetrics.systemGestureInsetLeft = systemGestureInsets.left;
-
-      // TODO(garyq): Expose the full rects of the display cutout.
-
-      // Take the max of the display cutout insets and existing padding to merge them
-      DisplayCutout cutout = insets.getDisplayCutout();
-      if (cutout != null) {
-        Insets waterfallInsets = cutout.getWaterfallInsets();
-        viewportMetrics.viewPaddingTop =
-            Math.max(
-                Math.max(viewportMetrics.viewPaddingTop, waterfallInsets.top),
-                cutout.getSafeInsetTop());
-        viewportMetrics.viewPaddingRight =
-            Math.max(
-                Math.max(viewportMetrics.viewPaddingRight, waterfallInsets.right),
-                cutout.getSafeInsetRight());
-        viewportMetrics.viewPaddingBottom =
-            Math.max(
-                Math.max(viewportMetrics.viewPaddingBottom, waterfallInsets.bottom),
-                cutout.getSafeInsetBottom());
-        viewportMetrics.viewPaddingLeft =
-            Math.max(
-                Math.max(viewportMetrics.viewPaddingLeft, waterfallInsets.left),
-                cutout.getSafeInsetLeft());
-      }
     } else {
-      // We zero the left and/or right sides to prevent the padding the
-      // navigation bar would have caused.
-      ZeroSides zeroSides = ZeroSides.NONE;
-      if (!navigationBarVisible) {
-        zeroSides = calculateShouldZeroSides();
-      }
-
-      // Status bar (top), navigation bar (bottom) and left/right system insets should
-      // partially obscure the content (padding).
-      viewportMetrics.viewPaddingTop = statusBarVisible ? insets.getSystemWindowInsetTop() : 0;
-      viewportMetrics.viewPaddingRight =
-          zeroSides == ZeroSides.RIGHT || zeroSides == ZeroSides.BOTH
-              ? 0
-              : insets.getSystemWindowInsetRight();
-      viewportMetrics.viewPaddingBottom =
-          navigationBarVisible && guessBottomKeyboardInset(insets) == 0
-              ? insets.getSystemWindowInsetBottom()
-              : 0;
-      viewportMetrics.viewPaddingLeft =
-          zeroSides == ZeroSides.LEFT || zeroSides == ZeroSides.BOTH
-              ? 0
-              : insets.getSystemWindowInsetLeft();
-
-      // Bottom system inset (keyboard) should adjust scrollable bottom edge (inset).
       viewportMetrics.viewInsetTop = 0;
       viewportMetrics.viewInsetRight = 0;
       viewportMetrics.viewInsetBottom = guessBottomKeyboardInset(insets);
       viewportMetrics.viewInsetLeft = 0;
+    }
+
+    // TODO(garyq): Expose the full rects of the display cutout.
+
+    // Take the max of the display cutout insets and existing padding to merge them
+    DisplayCutoutCompat cutout = windowInsetsCompat.getDisplayCutout();
+    if (cutout != null) {
+      androidx.core.graphics.Insets waterfallInsets = cutout.getWaterfallInsets();
+      viewportMetrics.viewPaddingTop =
+          Math.max(
+              Math.max(viewportMetrics.viewPaddingTop, waterfallInsets.top),
+              cutout.getSafeInsetTop());
+      viewportMetrics.viewPaddingRight =
+          Math.max(
+              Math.max(viewportMetrics.viewPaddingRight, waterfallInsets.right),
+              cutout.getSafeInsetRight());
+      viewportMetrics.viewPaddingBottom =
+          Math.max(
+              Math.max(viewportMetrics.viewPaddingBottom, waterfallInsets.bottom),
+              cutout.getSafeInsetBottom());
+      viewportMetrics.viewPaddingLeft =
+          Math.max(
+              Math.max(viewportMetrics.viewPaddingLeft, waterfallInsets.left),
+              cutout.getSafeInsetLeft());
     }
 
     Log.v(
